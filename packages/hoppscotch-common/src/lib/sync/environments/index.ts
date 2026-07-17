@@ -24,6 +24,7 @@ import {
   GlobalEnvironmentSchemaVersion,
 } from "@hoppscotch/data"
 import { platform } from "~/platform"
+import { settingsHydrated, settingsStore } from "~/newstore/settings"
 import { runDispatchWithOutSyncing } from ".."
 import {
   createUserGlobalEnvironment,
@@ -43,13 +44,27 @@ function initEnvironmentsSync() {
 
   currentUser$.subscribe(async (user) => {
     if (user) {
-      await loadAllEnvironments()
+      // Wait for persisted settings before reading the toggle (settings hydrate
+      // in `initPost`, after this load is triggered), then gate the load on
+      // syncEnvironments so a user who disabled environment sync doesn't have
+      // local environments replaced (and a backend global-env created) on login.
+      await settingsHydrated
+
+      if (settingsStore.value.syncEnvironments) {
+        await loadAllEnvironments()
+      }
     }
   })
 
-  authEvents$.subscribe((event) => {
+  authEvents$.subscribe(async (event) => {
     if (event.event == "login" || event.event == "token_refresh") {
-      environnmentsSyncer.startListeningToSubscriptions()
+      // Gate the initial subscription start on the toggle; this auth-event
+      // path previously bypassed the toggle-aware start/stop in the syncer.
+      await settingsHydrated
+
+      if (settingsStore.value.syncEnvironments) {
+        environnmentsSyncer.startListeningToSubscriptions()
+      }
     }
 
     if (event.event == "logout") {
