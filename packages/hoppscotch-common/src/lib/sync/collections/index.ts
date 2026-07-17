@@ -269,26 +269,48 @@ async function loadUserCollections(collectionType: "REST" | "GQL") {
         ExportedUserCollectionGQL | ExportedUserCollectionREST
       >
     ).map((collection) => ({ v: 1, ...collection }))
+
+    const serverCollections = exportedCollections.map(
+      (collection) =>
+        exportedCollectionToHoppCollection(
+          collection,
+          collectionType
+        ) as HoppCollection
+    )
+
     runDispatchWithOutSyncing(() => {
+      // Merge — do not replace. A login load must never erase local data the
+      // server did not echo back: an unsynced/pending import, guest-mode
+      // collections created while logged out, or an empty/capped server
+      // response (the 2026.6.0 data-loss repro: import, quit, relaunch → the
+      // collection vanished because an empty backend result wholesale-replaced
+      // the store). Server collections are upserted by id; local collections
+      // absent from the payload are preserved. Cross-device deletions arrive
+      // via the UserCollectionRemoved subscription, not this load path.
+      const collectionStore =
+        collectionType == "REST" ? restCollectionStore : graphqlCollectionStore
+
+      const serverIds = new Set(
+        serverCollections.map((c) => c.id).filter(Boolean) as string[]
+      )
+      const merged = collectionStore.value.state.filter(
+        (c) => !c.id || !serverIds.has(c.id)
+      )
+
+      for (const serverCollection of serverCollections) {
+        const existingIndex = merged.findIndex(
+          (c) => !!c.id && c.id === serverCollection.id
+        )
+        if (existingIndex >= 0) {
+          merged[existingIndex] = serverCollection
+        } else {
+          merged.push(serverCollection)
+        }
+      }
+
       collectionType == "REST"
-        ? setRESTCollections(
-            exportedCollections.map(
-              (collection) =>
-                exportedCollectionToHoppCollection(
-                  collection,
-                  "REST"
-                ) as HoppCollection
-            )
-          )
-        : setGraphqlCollections(
-            exportedCollections.map(
-              (collection) =>
-                exportedCollectionToHoppCollection(
-                  collection,
-                  "GQL"
-                ) as HoppCollection
-            )
-          )
+        ? setRESTCollections(merged)
+        : setGraphqlCollections(merged)
     })
   }
 }
