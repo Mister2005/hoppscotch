@@ -86,6 +86,31 @@ function setupSubscriptions() {
   }
 }
 
+// Merge a server history payload into the local entries by id. Server entries
+// are upserted in place (preserving local order); local entries absent from the
+// payload are preserved. Used by `loadHistoryEntries` so a login load never
+// discards local entries the server didn't return — the load query sends no
+// `take`, so the backend may cap the result set and a wholesale replace would
+// truncate local history down to that cap.
+function mergeHistoryById<T extends { id?: string }>(
+  local: T[],
+  server: T[]
+): T[] {
+  const serverIds = new Set(server.map((e) => e.id).filter(Boolean) as string[])
+  const merged = local.filter((e) => !e.id || !serverIds.has(e.id))
+
+  for (const entry of server) {
+    const existingIndex = merged.findIndex((e) => !!e.id && e.id === entry.id)
+    if (existingIndex >= 0) {
+      merged[existingIndex] = entry
+    } else {
+      merged.push(entry)
+    }
+  }
+
+  return merged
+}
+
 async function loadHistoryEntries() {
   const res = await getUserHistoryEntries()
 
@@ -112,8 +137,12 @@ async function loadHistoryEntries() {
     }))
 
     runDispatchWithOutSyncing(() => {
-      setRESTHistoryEntries(restHistoryEntries)
-      setGraphqlHistoryEntries(gqlHistoryEntries)
+      setRESTHistoryEntries(
+        mergeHistoryById(restHistoryStore.value.state, restHistoryEntries)
+      )
+      setGraphqlHistoryEntries(
+        mergeHistoryById(graphqlHistoryStore.value.state, gqlHistoryEntries)
+      )
     })
   }
 }
