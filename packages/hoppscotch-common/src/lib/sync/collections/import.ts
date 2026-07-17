@@ -38,6 +38,14 @@ export const importToPersonalWorkspace = async (
 ) => {
   const collectionsWithRefIds = collections.map(ensureRefIds)
 
+  // True once the backend-accepted tree has been appended to the local store.
+  // `loadImportedUserCollections` dispatches synchronously, so once it resolves
+  // the append is committed. The catch below reads this so a throw in the
+  // post-append ref-id bookkeeping cannot re-append the same tree (the previous
+  // unconditional `appendImportedCollectionsLocally` duplicated collections
+  // whenever reconciliation threw after a successful backend import).
+  let backendTreeAppended = false
+
   try {
     const transformedCollection = collectionsWithRefIds.map((collection) =>
       translateToPersonalCollectionFormat(collection)
@@ -55,6 +63,8 @@ export const importToPersonalWorkspace = async (
           ? "REST"
           : "GQL"
       )
+
+      backendTreeAppended = true
 
       // Backstop populate: pair loaded → original by `_ref_id` (round-tripped
       // via `data._ref_id`), not by index — backend may reorder. Canonical
@@ -114,7 +124,20 @@ export const importToPersonalWorkspace = async (
     // forgets the upstream populate doesn't silently lose secrets on
     // backend failure.
     return appendImportedCollectionsLocally(collectionsWithRefIds, reqType)
-  } catch {
+  } catch (e) {
+    // If the backend already accepted the import and the tree was appended,
+    // a throw here is a reconciliation failure only — the collection tree is
+    // already in the store, so re-appending would duplicate it. Only fall back
+    // to a local append when the backend never accepted the payload.
+    if (backendTreeAppended) {
+      console.error(
+        "[importToPersonalWorkspace] secret-variable reconciliation failed " +
+          "after the collection tree was appended; not re-appending. Some " +
+          "secret values may need to be re-entered.",
+        e
+      )
+      return E.right({ success: true })
+    }
     return appendImportedCollectionsLocally(collectionsWithRefIds, reqType)
   }
 }
