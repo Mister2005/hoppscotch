@@ -32,6 +32,7 @@ import { runDispatchWithOutSyncing } from ".."
 import { ReqType } from "~/helpers/backend/graphql"
 import { ref } from "vue"
 import { platform } from "~/platform"
+import { settingsHydrated, settingsStore } from "~/newstore/settings"
 
 function initHistorySync() {
   const authEvents$ = platform.auth.getAuthEventsStream()
@@ -46,13 +47,27 @@ function initHistorySync() {
     getUserHistoryStatus()
 
     if (user) {
-      await loadHistoryEntries()
+      // Wait for persisted settings before reading the toggle (settings hydrate
+      // in `initPost`, after this load is triggered), then gate the load on
+      // syncHistory so a user who disabled history sync doesn't have local
+      // history replaced by the server payload on login.
+      await settingsHydrated
+
+      if (settingsStore.value.syncHistory) {
+        await loadHistoryEntries()
+      }
     }
   })
 
-  authEvents$.subscribe((event) => {
+  authEvents$.subscribe(async (event) => {
     if (event.event == "login" || event.event == "token_refresh") {
-      restHistorySyncer.startListeningToSubscriptions()
+      // Gate the initial subscription start on the toggle; this auth-event
+      // path previously bypassed the toggle-aware start/stop in the syncer.
+      await settingsHydrated
+
+      if (settingsStore.value.syncHistory) {
+        restHistorySyncer.startListeningToSubscriptions()
+      }
     }
 
     if (event.event == "logout") {
