@@ -237,6 +237,27 @@ export const settingsStore = new DispatchingStore(
 )
 
 /**
+ * Resolves once persisted settings have been applied to `settingsStore` by the
+ * persistence layer (`setupSettingsPersistence`, during `initPost`). The sync
+ * load and subscription paths `await` this before reading a `sync*` toggle, so
+ * a login load can't fire under default settings before a user's persisted
+ * "sync disabled" choice is restored — without it, the load would race ahead
+ * of `initPost` (settings hydrate there, after `initAuthAndSync`), read the
+ * default `true`, and pull/apply server state against the user's intent.
+ *
+ * Always resolves: `setupSettingsPersistence` calls `markSettingsHydrated` on
+ * every exit path (parsed, schema-failed, missing, errored), and `initPost`
+ * runs unconditionally after mount, so awaiters never hang.
+ */
+let _markSettingsHydrated: (() => void) | undefined
+export const settingsHydrated: Promise<void> = new Promise<void>((resolve) => {
+  _markSettingsHydrated = resolve
+})
+export function markSettingsHydrated() {
+  _markSettingsHydrated?.()
+}
+
+/**
  * An observable value to make avail all the state information at once
  */
 export const settings$ = settingsStore.subject$.asObservable()

@@ -60,6 +60,7 @@ import {
   applySetting,
   bulkApplySettings,
   getDefaultSettings,
+  markSettingsHydrated,
   performSettingsDataMigrations,
   settingsStore,
 } from "../../newstore/settings"
@@ -524,6 +525,12 @@ export class PersistenceService extends Service {
     settingsStore.subject$.subscribe(async (settings) => {
       await Store.set(STORE_NAMESPACE, STORE_KEYS.SETTINGS, settings)
     })
+
+    // Signal that persisted settings have been applied (or that there were none
+    // / they failed to parse) so sync load paths awaiting `settingsHydrated`
+    // can read the user's real `sync*` toggle instead of the default. Terminal
+    // for this function — every exit path above falls through to here.
+    markSettingsHydrated()
   }
 
   private async setupRESTHistoryPersistence() {

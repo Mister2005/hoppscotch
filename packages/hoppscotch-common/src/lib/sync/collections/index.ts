@@ -71,6 +71,7 @@ import {
   updateRESTRequestOrder,
 } from "~/newstore/collections"
 import { platform } from "~/platform"
+import { settingsHydrated, settingsStore } from "~/newstore/settings"
 import { runDispatchWithOutSyncing } from ".."
 import { gqlCollectionsSyncer } from "./gqlCollections.sync"
 import { importToPersonalWorkspace } from "./import"
@@ -85,14 +86,29 @@ function initCollectionsSync() {
 
   currentUser$.subscribe(async (user) => {
     if (user) {
-      loadUserCollections("REST")
-      loadUserCollections("GQL")
+      // Wait for persisted settings before reading the toggle: settings hydrate
+      // in `initPost` (after `initAuthAndSync`), so without this a login load
+      // would read the default `syncCollections = true` and pull/apply server
+      // state for a user who deliberately disabled sync.
+      await settingsHydrated
+
+      if (settingsStore.value.syncCollections) {
+        loadUserCollections("REST")
+        loadUserCollections("GQL")
+      }
     }
   })
 
-  authEvents$.subscribe((event) => {
+  authEvents$.subscribe(async (event) => {
     if (event.event == "login" || event.event == "token_refresh") {
-      collectionsSyncer.startListeningToSubscriptions()
+      // Gate the initial subscription start on the toggle too. This auth-event
+      // path previously bypassed the toggle-aware start/stop in the syncer, so
+      // live server events were applied even with sync disabled.
+      await settingsHydrated
+
+      if (settingsStore.value.syncCollections) {
+        collectionsSyncer.startListeningToSubscriptions()
+      }
     }
 
     if (event.event == "logout") {
